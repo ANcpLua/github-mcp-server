@@ -1,17 +1,19 @@
 {
   "annotations": {
-    "title": "Delete the requester's latest pending pull request review",
-    "readOnlyHint": false
+    "destructiveHint": true,
+    "openWorldHint": true,
+    "title": "Delete Pending Pull Request Review"
   },
-  "description": "Delete the requester's latest pending pull request review. Use this after the user decides not to submit a pending review, if you don't know if they already created one then check first.",
+  "description": "Delete a pending pull request review.",
   "inputSchema": {
     "properties": {
       "owner": {
-        "description": "Repository owner",
+        "description": "Repository owner (username or organization)",
         "type": "string"
       },
       "pullNumber": {
-        "description": "Pull request number",
+        "description": "The pull request number",
+        "minimum": 1,
         "type": "number"
       },
       "repo": {

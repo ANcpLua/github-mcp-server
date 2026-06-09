@@ -6,53 +6,96 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 
-	"github.com/google/go-github/v73/github"
-	"github.com/mark3labs/mcp-go/mcp"
+	ghErrors "github.com/github/github-mcp-server/pkg/errors"
+	"github.com/github/github-mcp-server/pkg/utils"
+	"github.com/google/go-github/v87/github"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func searchHandler(
-	ctx context.Context,
-	getClient GetClientFn,
-	request mcp.CallToolRequest,
-	searchType string,
-	errorPrefix string,
-) (*mcp.CallToolResult, error) {
-	query, err := RequiredParam[string](request, "query")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	query = fmt.Sprintf("is:%s %s", searchType, query)
+func hasFilter(query, filterType string) bool {
+	// Match filter at start of string, after whitespace, or after non-word characters like '('
+	pattern := fmt.Sprintf(`(^|\s|\W)%s:\S+`, regexp.QuoteMeta(filterType))
+	matched, _ := regexp.MatchString(pattern, query)
+	return matched
+}
 
-	owner, err := OptionalParam[string](request, "owner")
+func hasSpecificFilter(query, filterType, filterValue string) bool {
+	// Match specific filter:value at start, after whitespace, or after non-word characters
+	// End with word boundary, whitespace, or non-word characters like ')'
+	pattern := fmt.Sprintf(`(^|\s|\W)%s:%s($|\s|\W)`, regexp.QuoteMeta(filterType), regexp.QuoteMeta(filterValue))
+	matched, _ := regexp.MatchString(pattern, query)
+	return matched
+}
+
+func hasRepoFilter(query string) bool {
+	return hasFilter(query, "repo")
+}
+
+func hasTypeFilter(query string) bool {
+	return hasFilter(query, "type")
+}
+
+// searchPostProcessFn is invoked after a successful search response, before
+// the call result is returned. It may attach additional metadata (such as IFC
+// labels) to the call result based on the search payload.
+type searchPostProcessFn func(ctx context.Context, result *github.IssuesSearchResult, callResult *mcp.CallToolResult)
+
+type searchConfig struct {
+	postProcess searchPostProcessFn
+}
+
+type searchOption func(*searchConfig)
+
+// withSearchPostProcess registers a callback invoked after a successful search
+// response. The callback may mutate the call result (e.g. to attach _meta.ifc).
+func withSearchPostProcess(fn searchPostProcessFn) searchOption {
+	return func(c *searchConfig) { c.postProcess = fn }
+}
+
+// prepareSearchArgs resolves the search query string and REST search options from the tool args,
+// applying the standard is:<type> / repo:<owner>/<repo> munging shared by search_issues and
+// search_pull_requests.
+func prepareSearchArgs(args map[string]any, searchType string) (string, *github.SearchOptions, error) {
+	query, err := RequiredParam[string](args, "query")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return "", nil, err
 	}
 
-	repo, err := OptionalParam[string](request, "repo")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+	if !hasSpecificFilter(query, "is", searchType) {
+		query = fmt.Sprintf("is:%s %s", searchType, query)
 	}
 
-	if owner != "" && repo != "" {
+	owner, err := OptionalParam[string](args, "owner")
+	if err != nil {
+		return "", nil, err
+	}
+
+	repo, err := OptionalParam[string](args, "repo")
+	if err != nil {
+		return "", nil, err
+	}
+
+	if owner != "" && repo != "" && !hasRepoFilter(query) {
 		query = fmt.Sprintf("repo:%s/%s %s", owner, repo, query)
 	}
 
-	sort, err := OptionalParam[string](request, "sort")
+	sort, err := OptionalParam[string](args, "sort")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return "", nil, err
 	}
-	order, err := OptionalParam[string](request, "order")
+	order, err := OptionalParam[string](args, "order")
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return "", nil, err
 	}
-	pagination, err := OptionalPaginationParams(request)
+	pagination, err := OptionalPaginationParams(args)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return "", nil, err
 	}
 
 	opts := &github.SearchOptions{
-		// Default to "created" if no sort is provided, as it's a common use case.
 		Sort:  sort,
 		Order: order,
 		ListOptions: github.ListOptions{
@@ -61,28 +104,57 @@ func searchHandler(
 		},
 	}
 
+	// field.<name>:<value> qualifiers require the advanced search API.
+	if strings.Contains(query, "field.") {
+		opts.AdvancedSearch = github.Ptr(true)
+	}
+
+	return query, opts, nil
+}
+
+func searchHandler(
+	ctx context.Context,
+	getClient GetClientFn,
+	args map[string]any,
+	searchType string,
+	errorPrefix string,
+	options ...searchOption,
+) (*mcp.CallToolResult, error) {
+	cfg := searchConfig{}
+	for _, opt := range options {
+		opt(&cfg)
+	}
+	query, opts, err := prepareSearchArgs(args, searchType)
+	if err != nil {
+		return utils.NewToolResultError(err.Error()), nil
+	}
+
 	client, err := getClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s: failed to get GitHub client: %w", errorPrefix, err)
+		return utils.NewToolResultErrorFromErr(errorPrefix+": failed to get GitHub client", err), nil
 	}
 	result, resp, err := client.Search.Issues(ctx, query, opts)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", errorPrefix, err)
+		return utils.NewToolResultErrorFromErr(errorPrefix, err), nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("%s: failed to read response body: %w", errorPrefix, err)
+			return utils.NewToolResultErrorFromErr(errorPrefix+": failed to read response body", err), nil
 		}
-		return mcp.NewToolResultError(fmt.Sprintf("%s: %s", errorPrefix, string(body))), nil
+		return ghErrors.NewGitHubAPIStatusErrorResponse(ctx, errorPrefix, resp, body), nil
 	}
 
 	r, err := json.Marshal(result)
 	if err != nil {
-		return nil, fmt.Errorf("%s: failed to marshal response: %w", errorPrefix, err)
+		return utils.NewToolResultErrorFromErr(errorPrefix+": failed to marshal response", err), nil
 	}
 
-	return mcp.NewToolResultText(string(r)), nil
+	callResult := utils.NewToolResultText(string(r))
+	if cfg.postProcess != nil {
+		cfg.postProcess(ctx, result, callResult)
+	}
+	return callResult, nil
 }

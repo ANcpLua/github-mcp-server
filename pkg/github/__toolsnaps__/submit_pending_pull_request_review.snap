@@ -1,17 +1,18 @@
 {
   "annotations": {
-    "title": "Submit the requester's latest pending pull request review",
-    "readOnlyHint": false
+    "destructiveHint": false,
+    "openWorldHint": true,
+    "title": "Submit Pending Pull Request Review"
   },
-  "description": "Submit the requester's latest pending pull request review, normally this is a final step after creating a pending review, adding comments first, unless you know that the user already did the first two steps, you should check before calling this.",
+  "description": "Submit a pending pull request review.",
   "inputSchema": {
     "properties": {
       "body": {
-        "description": "The text of the review comment",
+        "description": "The review body text (optional)",
         "type": "string"
       },
       "event": {
-        "description": "The event to perform",
+        "description": "The review action to perform",
         "enum": [
           "APPROVE",
           "REQUEST_CHANGES",
@@ -20,11 +21,12 @@
         "type": "string"
       },
       "owner": {
-        "description": "Repository owner",
+        "description": "Repository owner (username or organization)",
         "type": "string"
       },
       "pullNumber": {
-        "description": "Pull request number",
+        "description": "The pull request number",
+        "minimum": 1,
         "type": "number"
       },
       "repo": {

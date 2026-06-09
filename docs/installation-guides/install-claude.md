@@ -1,103 +1,222 @@
 # Install GitHub MCP Server in Claude Applications
 
-This guide covers installation of the GitHub MCP server for Claude Code CLI, Claude Desktop, and Claude Web applications.
-
-## Claude Web (claude.ai)
-
-Claude Web supports remote MCP servers through the Integrations built-in feature.
-
-### Prerequisites
-
-1. Claude Pro, Team, or Enterprise account (Integrations not available on free plan)
-2. [GitHub Personal Access Token](https://github.com/settings/personal-access-tokens/new)
-
-### Installation
-
-**Note**: As of July 2025, the remote GitHub MCP Server has known compatibility issues with Claude Web. While Claude Web supports remote MCP servers from other providers (like Atlassian, Zapier, Notion), the GitHub MCP Server integration may not work reliably.
-
-For other remote MCP servers that do work with Claude Web:
-
-1. Go to [claude.ai](https://claude.ai) and log in
-2. Click your profile icon → **Settings**
-3. Navigate to **Integrations** section
-4. Click **+ Add integration** or **Add More**
-5. Enter the remote server URL
-6. Follow the OAuth authentication flow when prompted
-
-**Alternative**: Use Claude Desktop or Claude Code CLI for reliable GitHub MCP Server integration.
-
----
-
 ## Claude Code CLI
 
-Claude Code CLI provides command-line access to Claude with MCP server integration.
-
 ### Prerequisites
+- Claude Code CLI installed
+- [GitHub Personal Access Token](https://github.com/settings/personal-access-tokens/new)
+- For local setup: [Docker](https://www.docker.com/) installed and running
+- Open Claude Code inside the directory for your project (recommended for best experience and clear scope of configuration)
 
-1. Claude Code CLI installed
-2. [GitHub Personal Access Token](https://github.com/settings/personal-access-tokens/new)
-3. [Docker](https://www.docker.com/) installed and running
+<details>
+<summary><b>Storing Your PAT Securely</b></summary>
+<br>
 
-### Installation
+For security, avoid hardcoding your token. One common approach:
 
-Run the following command to add the GitHub MCP server using Docker:
-
-```bash
-claude mcp add github -- docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+1. Store your token in `.env` file
+```
+GITHUB_PAT=your_token_here
 ```
 
-Then set the environment variable:
+2. Add to .gitignore
 ```bash
-claude mcp update github -e GITHUB_PERSONAL_ACCESS_TOKEN=your_github_pat
+echo -e ".env\n.mcp.json" >> .gitignore
 ```
 
-Or as a single command with the token inline:
+</details>
+
+### Remote Server Setup (Streamable HTTP)
+
+> **Note**: For Claude Code versions **2.1.1 and newer**, use the `add-json` command format below. For older versions, see the [legacy command format](#for-older-versions-of-claude-code).
+>
+> **Windows / CLI note**: `claude mcp add-json` may return `Invalid input` when adding an HTTP server. If that happens, use the legacy `claude mcp add --transport http ...` command format below.
+
+1. Run the following command in the terminal (not in Claude Code CLI):
 ```bash
-claude mcp add-json github '{"command": "docker", "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "your_github_pat"}}'
+claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer YOUR_GITHUB_PAT"}}'
 ```
 
-**Important**: The npm package `@modelcontextprotocol/server-github` is no longer supported as of April 2025. Use the official Docker image `ghcr.io/github/github-mcp-server` instead.
+With an environment variable (Linux/macOS):
+```bash
+export GITHUB_PAT="$(grep '^GITHUB_PAT=' .env | cut -d '=' -f2-)"
+claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer '"$GITHUB_PAT"'"}}'
+```
 
-### Configuration Options
+With an environment variable (Windows PowerShell):
+```powershell
+$githubPatLine = Get-Content .env | Select-String "^\s*GITHUB_PAT\s*=" | Select-Object -First 1
+$env:GITHUB_PAT = ($githubPatLine.Line -split "=", 2)[1].Trim().Trim('"').Trim("'")
+claude mcp add-json github "{`"type`":`"http`",`"url`":`"https://api.githubcopilot.com/mcp`",`"headers`":{`"Authorization`":`"Bearer $env:GITHUB_PAT`"}}"
+```
 
-- Use `-s user` to add the server to your user configuration (available across all projects)
-- Use `-s project` to add the server to project-specific configuration (shared via `.mcp.json`)
-- Default scope is `local` (available only to you in the current project)
+> **About the `--scope` flag** (optional): Use this to specify where the configuration is stored:
+> - `local` (default): Available only to you in the current project (was called `project` in older versions)
+> - `project`: Shared with everyone in the project via `.mcp.json` file
+> - `user`: Available to you across all projects (was called `global` in older versions)
+>
+> Example: Add `--scope user` to the end of the command to make it available across all projects.
+
+2. Restart Claude Code
+3. Run `claude mcp list` to see if the GitHub server is configured
+
+### Local Server Setup (Docker required)
+
+### With Docker
+1. Run the following command in the terminal (not in Claude Code CLI):
+```bash
+claude mcp add github -e GITHUB_PERSONAL_ACCESS_TOKEN=YOUR_GITHUB_PAT -- docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+```
+
+With an environment variable:
+```bash
+claude mcp add github -e GITHUB_PERSONAL_ACCESS_TOKEN=$(grep GITHUB_PAT .env | cut -d '=' -f2) -- docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+```
+2. Restart Claude Code
+3. Run `claude mcp list` to see if the GitHub server is configured
+
+### With a Binary (no Docker)
+
+1. Download [release binary](https://github.com/github/github-mcp-server/releases)
+2. Add to your `PATH`
+3. Run:
+```bash
+claude mcp add-json github '{"command": "github-mcp-server", "args": ["stdio"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT"}}'
+```
+2. Restart Claude Code
+3. Run `claude mcp list` to see if the GitHub server is configured
 
 ### Verification
-
-Run the following command to verify the installation:
 ```bash
 claude mcp list
+claude mcp get github
+```
+
+### For Older Versions of Claude Code
+
+If you're using Claude Code version **2.1.0 or earlier**, use this legacy command format:
+
+```bash
+claude mcp add --transport http github https://api.githubcopilot.com/mcp -H "Authorization: Bearer YOUR_GITHUB_PAT"
+```
+
+With an environment variable:
+```bash
+claude mcp add --transport http github https://api.githubcopilot.com/mcp -H "Authorization: Bearer $(grep GITHUB_PAT .env | cut -d '=' -f2)"
+```
+
+#### Windows (PowerShell)
+
+If you see `missing required argument 'name'`, put the server name immediately after `claude mcp add`:
+
+```powershell
+$pat = "YOUR_GITHUB_PAT"
+claude mcp add github --transport http https://api.githubcopilot.com/mcp/ -H "Authorization: Bearer $pat"
 ```
 
 ---
 
 ## Claude Desktop
 
-Claude Desktop provides a graphical interface for interacting with the GitHub MCP Server.
+> ⚠️ **Note**: Some users have reported compatibility issues with Claude Desktop and Docker-based MCP servers. We're investigating. If you experience issues, try using another MCP host, while we look into it!
 
 ### Prerequisites
+- Claude Desktop installed (latest version)
+- [GitHub Personal Access Token](https://github.com/settings/personal-access-tokens/new)
+- [Docker](https://www.docker.com/) installed and running
 
-1. Claude Desktop installed
-2. [GitHub Personal Access Token](https://github.com/settings/personal-access-tokens/new)
-3. [Docker](https://www.docker.com/) installed and running
+> **Note**: Claude Desktop supports MCP servers that are both local (stdio) and remote ("connectors"). Remote servers can generally be added via Settings → Connectors → "Add custom connector". However, the GitHub remote MCP server requires OAuth authentication through a registered GitHub App (or OAuth App), which is not currently supported. Use the local Docker setup instead.
+
+### Configuration File Location
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+### Local Server Setup (Docker)
+
+Add this codeblock to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT"
+      }
+    }
+  }
+}
+```
+
+### Manual Setup Steps
+1. Open Claude Desktop
+2. Go to Settings → Developer → Edit Config
+3. Paste the code block above in your configuration file
+4. If you're navigating to the configuration file outside of the app:
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+5. Open the file in a text editor
+6. Paste one of the code blocks above, based on your chosen configuration (remote or local)
+7. Replace `YOUR_GITHUB_PAT` with your actual token or $GITHUB_PAT environment variable
+8. Save the file
+9. Restart Claude Desktop
+
+---
+
+## Xcode (Claude Agent)
+
+Xcode's Claude Agent uses the same `.claude.json` configuration format as the Claude Code CLI, but reads it from an Xcode-specific directory rather than the global config location.
 
 ### Configuration File Location
 
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux**: `~/.config/Claude/claude_desktop_config.json` (unofficial support)
+```
+~/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/.claude.json
+```
 
-### Installation
+> Configurations placed here only affect Claude Agent when launched from Xcode. See [Apple's documentation](https://developer.apple.com/documentation/xcode/setting-up-coding-intelligence#Customize-the-Claude-Agent-and-Codex-environments) for more details.
 
-Add the following to your `claude_desktop_config.json`:
+### Remote Server Setup (Recommended)
+
+Run the following command in Terminal to add the remote GitHub MCP server:
+
+```bash
+claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp/","headers":{"Authorization":"Bearer YOUR_GITHUB_PAT"}}' --config ~/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/.claude.json
+```
+
+Or open the file in a text editor and add the `mcpServers` block manually:
 
 ```json
 {
   "mcpServers": {
     "github": {
-      "command": "docker",
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer YOUR_GITHUB_PAT"
+      }
+    }
+  }
+}
+```
+
+### Local Server Setup (Docker)
+
+> **macOS note**: Xcode runs with a minimal `PATH` that typically excludes `/usr/local/bin` (Intel) and `/opt/homebrew/bin` (Apple Silicon). Use the full path to `docker` to ensure it can be found. Run `which docker` in Terminal to find the correct path on your system.
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "/usr/local/bin/docker",
       "args": [
         "run",
         "-i",
@@ -107,98 +226,49 @@ Add the following to your `claude_desktop_config.json`:
         "ghcr.io/github/github-mcp-server"
       ],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "your_github_pat"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT"
       }
     }
   }
 }
 ```
 
-**Important**: The npm package `@modelcontextprotocol/server-github` is no longer supported as of April 2025. Use the official Docker image `ghcr.io/github/github-mcp-server` instead.
-
-### Using Environment Variables
-
-Claude Desktop supports environment variable references. You can use:
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-e",
-        "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "ghcr.io/github/github-mcp-server"
-      ],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_PAT"
-      }
-    }
-  }
-}
-```
-
-Then set the environment variable in your system before starting Claude Desktop.
-
-### Installation Steps
-
-1. Open Claude Desktop
-2. Go to Settings (from the Claude menu) → Developer → Edit Config
-3. Add your chosen configuration
-4. Save the file
-5. Restart Claude Desktop
-
-### Verification
-
-After restarting, you should see:
-- An MCP icon in the Claude Desktop interface
-- The GitHub server listed as "running" in Developer settings
+### Setup Steps
+1. Create or open `~/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/.claude.json`
+2. Add the configuration block above
+3. Replace `YOUR_GITHUB_PAT` with your actual token
+4. Restart Xcode
 
 ---
 
-## Troubleshooting
 
-### Claude Web
-- Currently experiencing compatibility issues with the GitHub MCP Server
-- Try other remote MCP servers (Atlassian, Zapier, Notion) which work reliably
-- Use Claude Desktop or Claude Code CLI as alternatives for GitHub integration
+**Authentication Failed:**
+- Verify PAT has `repo` scope
+- Check token hasn't expired
 
-### Claude Code CLI
-- Verify the command syntax is correct (note the single quotes around the JSON)
-- Ensure Docker is running: `docker --version`
-- Use `/mcp` command within Claude Code to check server status
+**Remote Server:**
+- Verify URL: `https://api.githubcopilot.com/mcp`
 
-### Claude Desktop
-- Check logs at:
-  - **macOS**: `~/Library/Logs/Claude/`
-  - **Windows**: `%APPDATA%\Claude\logs\`
-- Look for `mcp-server-github.log` for server-specific errors
-- Ensure configuration file is valid JSON
-- Try running the Docker command manually in terminal to diagnose issues
+**Docker Issues (Local Only):**
+- Ensure Docker Desktop is running
+- Try: `docker pull ghcr.io/github/github-mcp-server`
+- If pull fails: `docker logout ghcr.io` then retry
 
-### Common Issues
-- **Invalid JSON**: Validate your configuration at [jsonlint.com](https://jsonlint.com)
-- **PAT issues**: Ensure your GitHub PAT has required scopes
-- **Docker not found**: Install Docker Desktop and ensure it's running
-- **Docker image pull fails**: Try `docker logout ghcr.io` then retry
+**Server Not Starting / Tools Not Showing:**
+- Run `claude mcp list` to view currently configured MCP servers
+- Validate JSON syntax
+- If using an environment variable to store your PAT, make sure you're properly sourcing your PAT using the environment variable
+- Restart Claude Code and check `/mcp` command
+- Delete the GitHub server by running `claude mcp remove github` and repeating the setup process with a different method
+- Make sure you're running Claude Code within the project you're currently working on to ensure the MCP configuration is properly scoped to your project
+- Check logs:
+  - Claude Code: Use `/mcp` command
+  - Claude Desktop: `ls ~/Library/Logs/Claude/` and `cat ~/Library/Logs/Claude/mcp-server-*.log` (macOS) or `%APPDATA%\Claude\logs\` (Windows)
 
 ---
 
-## Security Best Practices
+## Important Notes
 
-- **Protect configuration files**: Set appropriate file permissions
-- **Use environment variables** when possible instead of hardcoding tokens
-- **Limit PAT scope** to only necessary permissions
-- **Regularly rotate** your GitHub Personal Access Tokens
-- **Never commit** configuration files containing tokens to version control
-
----
-
-## Additional Resources
-
-- [Model Context Protocol Documentation](https://modelcontextprotocol.io)
-- [Claude Code MCP Documentation](https://docs.anthropic.com/en/docs/claude-code/mcp)
-- [Claude Web Integrations Support](https://support.anthropic.com/en/articles/11175166-about-custom-integrations-using-remote-mcp)
+- The npm package `@modelcontextprotocol/server-github` is deprecated as of April 2025
+- Remote server requires Streamable HTTP support (check your Claude version)
+- For Claude Code configuration scopes, see the `--scope` flag documentation in the [Remote Server Setup](#remote-server-setup-streamable-http) section
